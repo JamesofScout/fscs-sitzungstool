@@ -46,6 +46,88 @@ trunk serve --open
 
 Alternativ die Web-App via Cargo bauen, sofern im Projekt ein passender Run-Target konfiguriert ist.
 
+## Deployment mit Nix
+
+Wenn das Projekt in einer Nix-Umgebung deployed werden soll, ist in der Regel eine minimale `shell.nix` oder ein Nix-Flake für Rust + Trunk ausreichend.
+
+Beispiel für eine einfache Shell-Umgebung:
+
+```nix
+{ pkgs ? import <nixpkgs> {} }:
+
+pkgs.mkShell {
+  buildInputs = with pkgs; [
+    rustc
+    cargo
+    rustfmt
+    trunk
+  ];
+}
+```
+
+Dann:
+
+```bash
+nix-shell
+cargo build
+trunk build --release
+```
+
+Die erzeugte Ausgabe liegt danach im Ordner `dist/` und kann als statische Web-App ausgeliefert werden.
+
+Wichtig: `FSCS_SITE_URL` muss in der Laufzeitumgebung korrekt gesetzt sein, damit die Frontend-API-Requests auf das Backend zeigen.
+
+## Deployment ohne Nix
+
+Ohne Nix kann das Frontend mit den Standard-Rust- und Trunk-Tools gebaut und deployed werden.
+
+### 1. Abhängigkeiten installieren
+
+```bash
+rustup default stable
+cargo install trunk
+```
+
+### 2. Build erzeugen
+
+```bash
+trunk build --release
+```
+
+### 3. Ausliefern
+
+Die Dateien aus `dist/` können auf einem Webserver veröffentlicht werden, z. B.:
+
+- GitHub Pages
+- nginx
+- Caddy
+- statischer Webserver im Docker-Container
+
+Beispiel für nginx:
+
+```nginx
+server {
+    listen 80;
+    server_name example.com;
+    root /var/www/sitzungstool2/dist;
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
+```
+
+### 4. Laufzeitkonfiguration
+
+Vor dem Start auf dem Server sollte `FSCS_SITE_URL` gesetzt werden, falls das Frontend nicht lokal auf `localhost:8080` laufen soll.
+
+Beispiel:
+
+```bash
+export FSCS_SITE_URL=https://api.example.com
+```
+
 ## Umgebungsvariablen
 
 Das Frontend verwendet optional die Umgebungsvariable `FSCS_SITE_URL`:
