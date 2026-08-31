@@ -1,0 +1,998 @@
+use chrono::{DateTime, Utc};
+use dioxus::prelude::*;
+use reqwest::Client;
+use serde::Deserialize;
+use serde::Serialize;
+use serde::de::DeserializeOwned;
+
+const SITE_URL: &str = match option_env!("FSCS_SITE_URL") {
+    Some(a) => a,
+    None => "http://localhost:8080",
+};
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+struct Sitzung {
+    id: String,
+    datetime: String,
+    ort: String,
+    typ: String,
+    antragsfrist: String,
+    legislatur_periode: LegislaturPeriode,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+struct LegislaturPeriode {
+    id: String,
+    name: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+struct PublicPerson {
+    id: String,
+    name: String,
+    user_name: Option<String>,
+    matrix_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+struct Role {
+    id: String,
+    name: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+struct Antrag {
+    id: String,
+    titel: String,
+    antragstext: String,
+    begruendung: String,
+    erstellt_am: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+struct TopWithAntraege {
+    id: String,
+    weight: i64,
+    name: String,
+    inhalt: String,
+    typ: String,
+    #[serde(default)]
+    antraege: Vec<Antrag>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct CreateSitzung {
+    datetime: String,
+    ort: String,
+    typ: String,
+    antragsfrist: String,
+    legislative_period: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct CreateAntrag {
+    titel: String,
+    antragstext: String,
+    begruendung: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct CreateTop {
+    name: String,
+    typ: String,
+    inhalt: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct AssocAntrag {
+    antrag_id: String,
+}
+
+async fn api_get<T: DeserializeOwned>(path: &str) -> Result<T, String> {
+    let url = format!("{SITE_URL}/api{path}");
+    let response = Client::new()
+        .get(&url)
+        .send()
+        .await
+        .map_err(|error| format!("API request failed: {error}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!("API returned HTTP {}", response.status()));
+    }
+
+    response
+        .json::<T>()
+        .await
+        .map_err(|error| format!("API response could not be decoded: {error}"))
+}
+
+async fn api_post<T: DeserializeOwned, B: Serialize>(path: &str, body: B) -> Result<T, String> {
+    let url = format!("{SITE_URL}/api{path}");
+    let response = Client::new()
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|error| format!("API request failed: {error}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!("API returned HTTP {}", response.status()));
+    }
+
+    response
+        .json::<T>()
+        .await
+        .map_err(|error| format!("API response could not be decoded: {error}"))
+}
+
+async fn api_post_without_body<T: DeserializeOwned>(path: &str) -> Result<T, String> {
+    let url = format!("{SITE_URL}/api{path}");
+    let response = Client::new()
+        .post(&url)
+        .send()
+        .await
+        .map_err(|error| format!("API request failed: {error}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!("API returned HTTP {}", response.status()));
+    }
+
+    response
+        .json::<T>()
+        .await
+        .map_err(|error| format!("API response could not be decoded: {error}"))
+}
+
+async fn api_patch<B: Serialize>(path: &str, body: B) -> Result<(), String> {
+    let url = format!("{SITE_URL}/api{path}");
+    let response = Client::new()
+        .patch(&url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|error| format!("API request failed: {error}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!("API returned HTTP {}", response.status()));
+    }
+
+    Ok(())
+}
+
+async fn api_delete(path: &str) -> Result<(), String> {
+    let url = format!("{SITE_URL}/api{path}");
+    let response = Client::new()
+        .delete(&url)
+        .send()
+        .await
+        .map_err(|error| format!("API request failed: {error}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!("API returned HTTP {}", response.status()));
+    }
+
+    Ok(())
+}
+
+async fn api_delete_with_body<B: Serialize>(path: &str, body: B) -> Result<(), String> {
+    let url = format!("{SITE_URL}/api{path}");
+    let response = Client::new()
+        .delete(&url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|error| format!("API request failed: {error}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!("API returned HTTP {}", response.status()));
+    }
+
+    Ok(())
+}
+
+fn encode_query(value: &str) -> String {
+    value
+        .bytes()
+        .flat_map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                vec![byte as char]
+            }
+            _ => format!("%{byte:02X}").chars().collect(),
+        })
+        .collect()
+}
+
+fn format_date(value: &str) -> String {
+    DateTime::parse_from_rfc3339(value)
+        .map(|date| date.format("%d.%m.%Y").to_string())
+        .unwrap_or_else(|_| value.to_string())
+}
+
+fn format_datetime(value: &str) -> String {
+    DateTime::parse_from_rfc3339(value)
+        .map(|date| date.format("%d.%m.%Y, %H:%M Uhr").to_string())
+        .unwrap_or_else(|_| value.to_string())
+}
+
+fn format_location(value: &str) -> String {
+    if value.is_empty() {
+        "Ort offen".to_string()
+    } else {
+        value.to_string()
+    }
+}
+
+fn protocol_url(session: &Sitzung) -> Option<String> {
+    let date = DateTime::parse_from_rfc3339(&session.datetime)
+        .ok()?
+        .with_timezone(&Utc);
+    if date >= Utc::now() {
+        return None;
+    }
+
+    let date = date.format("%Y-%m-%d");
+    let suffix = match session.typ.as_str() {
+        "vv" => "vv-protokoll",
+        "wahlvv" => "wahl-vv-protokoll",
+        _ => "protokoll",
+    };
+    Some(format!("{SITE_URL}/de/protokolle/{date}-{suffix}"))
+}
+
+fn session_sort_key(session: &Sitzung) -> DateTime<Utc> {
+    DateTime::parse_from_rfc3339(&session.datetime)
+        .map(|date| date.with_timezone(&Utc))
+        .unwrap_or(DateTime::<Utc>::MIN_UTC)
+}
+
+#[component]
+fn App() -> Element {
+    let mut page = use_signal(|| "Startseite".to_string());
+    let mut selected_session_id = use_signal(|| None::<String>);
+    let session_date = use_signal(String::new);
+    let session_time = use_signal(String::new);
+    let session_deadline_date = use_signal(String::new);
+    let session_deadline_time = use_signal(String::new);
+    let session_location = use_signal(String::new);
+    let mut session_type = use_signal(|| "normal".to_string());
+    let mut session_period = use_signal(String::new);
+    let mut session_feedback = use_signal(|| None::<String>);
+    let legislative_period_name = use_signal(String::new);
+    let mut legislative_period_feedback = use_signal(|| None::<String>);
+    let application_title = use_signal(String::new);
+    let application_text = use_signal(String::new);
+    let application_reason = use_signal(String::new);
+    let mut application_feedback = use_signal(|| None::<String>);
+    let top_name = use_signal(String::new);
+    let top_content = use_signal(String::new);
+    let mut top_type = use_signal(|| "normal".to_string());
+    let mut top_feedback = use_signal(|| None::<String>);
+    let mut selected_antrag_id = use_signal(|| None::<String>);
+    let mut expanded_top_id = use_signal(|| None::<String>);
+    let mut period_refresh = use_signal(|| 0u32);
+    let sessions = use_resource(|| async { api_get::<Vec<Sitzung>>("/sitzungen").await });
+    let persons = use_resource(|| async { api_get::<Vec<PublicPerson>>("/persons").await });
+    let roles = use_resource(|| async { api_get::<Vec<Role>>("/roles").await });
+    let calendars = use_resource(|| async { api_get::<Vec<String>>("/calendar").await });
+    let legislative_periods = use_resource(move || {
+        let _ = period_refresh();
+        async { api_get::<Vec<LegislaturPeriode>>("/legislative-periods").await }
+    });
+    use_effect(move || {
+        if page() == "Sitzung erstellen" {
+            period_refresh += 1;
+        }
+    });
+    let mut session_tops = use_resource(move || {
+        let selected_id = selected_session_id();
+        async move {
+            match selected_id {
+                Some(id) => api_get::<Vec<TopWithAntraege>>(&format!("/sitzungen/{id}/tops")).await,
+                None => Ok(Vec::new()),
+            }
+        }
+    });
+    let mut orphan_antraege =
+        use_resource(|| async { api_get::<Vec<Antrag>>("/antraege/orphans").await });
+
+    let periods = legislative_periods
+        .read()
+        .as_ref()
+        .and_then(|result| result.as_ref().ok())
+        .cloned()
+        .unwrap_or_default();
+    let default_period = periods.last().map(|period| period.id.clone());
+    use_effect(move || {
+        if session_period().is_empty() {
+            if let Some(period_id) = default_period.clone() {
+                session_period.set(period_id);
+            }
+        }
+    });
+
+    let mut session_list = sessions
+        .read()
+        .as_ref()
+        .and_then(|result| result.as_ref().ok())
+        .cloned()
+        .unwrap_or_default();
+    session_list.sort_by_key(session_sort_key);
+    session_list.reverse();
+    let latest_session = session_list.first().cloned();
+    let selected_session = selected_session_id().and_then(|id| {
+        session_list
+            .iter()
+            .find(|session| session.id == id)
+            .cloned()
+    });
+    let selected_tops = session_tops
+        .read()
+        .as_ref()
+        .and_then(|result| result.as_ref().ok())
+        .cloned()
+        .unwrap_or_default();
+    let orphan_list = orphan_antraege
+        .read()
+        .as_ref()
+        .and_then(|result| result.as_ref().ok())
+        .cloned()
+        .unwrap_or_default();
+
+    let people = persons
+        .read()
+        .as_ref()
+        .and_then(|result| result.as_ref().ok())
+        .cloned()
+        .unwrap_or_default();
+    let role_list = roles
+        .read()
+        .as_ref()
+        .and_then(|result| result.as_ref().ok())
+        .cloned()
+        .unwrap_or_default();
+    let calendar_list = calendars
+        .read()
+        .as_ref()
+        .and_then(|result| result.as_ref().ok())
+        .cloned()
+        .unwrap_or_default();
+
+    let navigation = [
+        ("Startseite", "⌂"),
+        ("Sitzungen", "▣"),
+        ("Anträge", "≡"),
+        ("Antrag einreichen", "＋"),
+    ];
+
+    rsx! {
+        style { {include_str!("style.css")} }
+        div { class: "app",
+            header { class: "topbar",
+                div { class: "topbar-inner",
+                    button {
+                        class: "mobile-menu",
+                        aria_label: "Navigation öffnen",
+                        onclick: move |_| page.set("Startseite".to_string()),
+                        "☰"
+                    }
+                    a { class: "brand", href: "#",
+                        span { class: "brand-mark", "FS" }
+                        span { class: "brand-copy",
+                            strong { "Fachschaft" }
+                            span { "Informatik" }
+                        }
+                    }
+                    div { class: "topbar-actions",
+                        label { class: "search",
+                            span { "⌕" }
+                            input { placeholder: "Suchen..." }
+                        }
+                        button { class: "round-button", aria_label: "Darkmode umschalten", "☾" }
+                        button { class: "round-button", aria_label: "Sprache auswählen", "🇩🇪" }
+                        a { class: "login-button", href: "{SITE_URL}/auth/login", "Anmelden" }
+                    }
+                }
+            }
+
+            div { class: "page-layout",
+                aside { class: "sidebar",
+                    div { class: "sidebar-heading",
+                        span { class: "sidebar-logo", "FS" }
+                        div {
+                            strong { "Fachschaft" }
+                            span { "Informatik" }
+                        }
+                    }
+                    nav {
+                        for (label, icon) in navigation {
+                            button {
+                                class: if page() == label { "nav-link active" } else { "nav-link" },
+                                onclick: move |_| page.set(label.to_string()),
+                                span { class: "nav-icon", "{icon}" }
+                                span { "{label}" }
+                            }
+                        }
+                    }
+                    div { class: "sidebar-footer",
+                        span { "HHU Düsseldorf" }
+                        span { "FS Informatik" }
+                    }
+                }
+
+                main { class: "content",
+                    match page().as_str() {
+                        "Sitzungen" => rsx! {
+                            PageHeader { eyebrow: "Gremienarbeit", title: "Sitzungen", text: "Alle veröffentlichten Sitzungen des Fachschaftsrats." }
+                            section { class: "panel",
+                                div { class: "panel-title-row",
+                                    h2 { "Sitzungsübersicht" }
+                                    div { class: "panel-actions",
+                                        span { class: "count-badge", "{session_list.len()} Einträge" }
+                                        button {
+                                            class: "primary-button compact",
+                                            onclick: move |_| page.set("Sitzung erstellen".to_string()),
+                                            "Sitzung erstellen"
+                                        }
+                                    }
+                                }
+                                if session_list.is_empty() {
+                                    EmptyState { text: "Keine Sitzungen konnten geladen werden." }
+                                } else {
+                                    div { class: "session-list",
+                                        for session in session_list.iter() {
+                                            SessionRow {
+                                                session: session.clone(),
+                                                on_open: move |id| {
+                                                    selected_session_id.set(Some(id));
+                                                    page.set("Sitzungsdetails".to_string());
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "Sitzungsdetails" => rsx! {
+                            if let Some(session) = selected_session {
+                                PageHeader { eyebrow: "Sitzungsarchiv", title: "Sitzungsdetails", text: "Datum, Ort, Antragsfrist und Tagesordnung dieser Sitzung." }
+                                section { class: "panel detail-panel",
+                                    button {
+                                        class: "text-button back-button",
+                                        onclick: move |_| page.set("Sitzungen".to_string()),
+                                        "← Zurück zur Sitzungsübersicht"
+                                    }
+                                    div { class: "detail-header",
+                                        div { class: "session-date large",
+                                            strong { "{format_date(&session.datetime)}" }
+                                            span { "{session.typ}" }
+                                        }
+                                        div {
+                                            h2 { "{session.legislatur_periode.name}" }
+                                            p { "{format_datetime(&session.datetime)} · {format_location(&session.ort)}" }
+                                            small { "Antragsfrist: {format_datetime(&session.antragsfrist)}" }
+                                        }
+                                    }
+                                    if let Some(url) = protocol_url(&session) {
+                                        a { class: "protocol-link", href: "{url}", target: "_blank", rel: "noreferrer", "Protokoll öffnen ↗" }
+                                    }
+                                    h2 { class: "agenda-title", "Tagesordnung" }
+                                    if selected_tops.is_empty() {
+                                        EmptyState { text: "Für diese Sitzung sind keine Tagesordnungspunkte veröffentlicht." }
+                                    } else {
+                                        div { class: "agenda-list",
+                                            for (top, expand_id, delete_id) in
+                                                selected_tops.clone().into_iter().map(|top| {
+                                                    let id = top.id.clone();
+                                                    (top, id.clone(), id)
+                                                }) {
+                                                article { class: "agenda-item",
+                                                    div { class: "agenda-number", "{top.weight + 1}" }
+                                                    div {
+                                                        h3 { "{top.name}" }
+                                                        span { class: "agenda-type", "{top.typ}" }
+                                                        button {
+                                                            class: "secondary-button",
+                                                            r#type: "button",
+                                                            onclick: move |_| expanded_top_id.set(Some(expand_id.clone())),
+                                                            "Antrag hinzufügen"
+                                                        }
+                                                        button {
+                                                            class: "danger-button top-delete",
+                                                            r#type: "button",
+                                                            onclick: move |_| {
+                                                                let path = format!(
+                                                                    "/sitzungen/{}/tops/{}",
+                                                                    selected_session_id().unwrap_or_default(),
+                                                                    delete_id
+                                                                );
+                                                                spawn(async move {
+                                                                    let result = api_delete(&path).await;
+                                                                    top_feedback.set(Some(match result {
+                                                                        Ok(()) => {
+                                                                            session_tops.restart();
+                                                                            "TOP erfolgreich gelöscht.".to_string()
+                                                                        }
+                                                                        Err(error) => format!("TOP konnte nicht gelöscht werden: {error}"),
+                                                                    }));
+                                                                });
+                                                            },
+                                                            "TOP löschen"
+                                                        }
+                                                        if !top.inhalt.is_empty() {
+                                                            p { "{top.inhalt}" }
+                                                        }
+                                                        for (antrag, antrag_top_id) in top
+                                                            .antraege
+                                                            .clone()
+                                                            .into_iter()
+                                                            .map(|antrag| (antrag, top.id.clone()))
+                                                        {
+                                                            div { class: "application-card",
+                                                                strong { "{antrag.titel}" }
+                                                                p { "{antrag.antragstext}" }
+                                                                small { "Eingereicht am {format_date(&antrag.erstellt_am)}" }
+                                                                button {
+                                                                    class: "danger-button",
+                                                                    r#type: "button",
+                                                                    onclick: move |_| {
+                                                                        let path = format!(
+                                                                            "/sitzungen/{}/tops/{}/assoc",
+                                                                            selected_session_id().unwrap_or_default(),
+                                                                            antrag_top_id
+                                                                        );
+                                                                        let payload = AssocAntrag {
+                                                                            antrag_id: antrag.id.clone(),
+                                                                        };
+                                                                        spawn(async move {
+                                                                            let result = api_delete_with_body(&path, payload).await;
+                                                                            top_feedback.set(Some(match result {
+                                                                                Ok(()) => {
+                                                                                    session_tops.restart();
+                                                                                    orphan_antraege.restart();
+                                                                                    "Antrag vom TOP entfernt.".to_string()
+                                                                                }
+                                                                                Err(error) => format!("Antrag konnte nicht vom TOP entfernt werden: {error}"),
+                                                                            }));
+                                                                        });
+                                                                    },
+                                                                    "Antrag vom TOP entfernen"
+                                                                }
+                                                            }
+                                                        }
+                                                            if expanded_top_id().as_deref() == Some(expand_id.as_str()) {
+                                                                div { class: "top-association-form",
+                                                                    label { class: "form-field",
+                                                                        span { "Vorhandenen Orphan-Antrag auswählen" }
+                                                                        select {
+                                                                            value: "{selected_antrag_id().unwrap_or_default()}",
+                                                                            onchange: move |event| selected_antrag_id.set(Some(event.value())),
+                                                                            option { value: "", "Antrag auswählen ..." }
+                                                                            for antrag in orphan_list.clone() {
+                                                                                option { value: "{antrag.id}", "{antrag.titel}" }
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    if orphan_list.is_empty() {
+                                                                        p { class: "form-hint", "Es sind derzeit keine nicht zugeordneten Anträge vorhanden." }
+                                                                    }
+                                                                    div { class: "association-actions",
+                                                                        button {
+                                                                            class: "primary-button",
+                                                                            r#type: "button",
+                                                                            disabled: selected_antrag_id().is_none(),
+                                                                            onclick: move |_| {
+                                                                                let Some(antrag_id) = selected_antrag_id() else {
+                                                                                    top_feedback.set(Some("Bitte zuerst einen Antrag auswählen.".to_string()));
+                                                                                    return;
+                                                                                };
+                                                                                let path = format!(
+                                                                                    "/sitzungen/{}/tops/{}/assoc",
+                                                                                    selected_session_id().unwrap_or_default(),
+                                                                                    expanded_top_id().unwrap_or_default()
+                                                                                );
+                                                                                let payload = AssocAntrag { antrag_id };
+                                                                                spawn(async move {
+                                                                                    let result = api_patch(&path, payload).await;
+                                                                                    top_feedback.set(Some(match result {
+                                                                                        Ok(()) => {
+                                                                                            session_tops.restart();
+                                                                                            orphan_antraege.restart();
+                                                                                            selected_antrag_id.set(None);
+                                                                                            expanded_top_id.set(None);
+                                                                                            "Antrag erfolgreich dem TOP zugeordnet.".to_string()
+                                                                                        }
+                                                                                        Err(error) => format!("Antrag konnte nicht zugeordnet werden: {error}"),
+                                                                                    }));
+                                                                                });
+                                                                            },
+                                                                            "Antrag zuordnen"
+                                                                        }
+                                                                        button {
+                                                                            class: "text-button",
+                                                                            r#type: "button",
+                                                                            onclick: move |_| {
+                                                                                selected_antrag_id.set(None);
+                                                                                expanded_top_id.set(None);
+                                                                            },
+                                                                            "Abbrechen"
+                                                                        }
+                                                                    }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    section { class: "form-panel top-form",
+                                        h2 { "TOP hinzufügen" }
+                                        FormField { label: "Titel", placeholder: "Titel des Tagesordnungspunkts", value: top_name, input_type: "text" }
+                                        label { class: "form-field",
+                                            span { "TOP-Typ" }
+                                            select {
+                                                value: "{top_type}",
+                                                onchange: move |event| top_type.set(event.value()),
+                                                option { value: "normal", "Normal" }
+                                                option { value: "regularia", "Regularia" }
+                                                option { value: "bericht", "Bericht" }
+                                                option { value: "verschiedenes", "Verschiedenes" }
+                                            }
+                                        }
+                                        TextAreaField { label: "Inhalt", placeholder: "Beschreibung des Tagesordnungspunkts", value: top_content }
+                                        button {
+                                            class: "primary-button",
+                                            r#type: "button",
+                                            onclick: move |_| {
+                                                let payload = CreateTop {
+                                                    name: top_name().trim().to_string(),
+                                                    typ: top_type(),
+                                                    inhalt: top_content().trim().to_string(),
+                                                };
+                                                let path = format!(
+                                                    "/sitzungen/{}/tops",
+                                                    selected_session_id().unwrap_or_default()
+                                                );
+                                                spawn(async move {
+                                                    let result = api_post::<TopWithAntraege, _>(&path, payload).await;
+                                                    top_feedback.set(Some(match result {
+                                                        Ok(_) => {
+                                                            session_tops.restart();
+                                                            "TOP erfolgreich hinzugefügt.".to_string()
+                                                        }
+                                                        Err(error) => format!("TOP konnte nicht hinzugefügt werden: {error}"),
+                                                    }));
+                                                });
+                                            },
+                                            "TOP hinzufügen"
+                                        }
+                                        if let Some(feedback) = top_feedback() {
+                                            p { class: "form-feedback", "{feedback}" }
+                                        }
+                                    }
+                                }
+                            } else {
+                                PageHeader { eyebrow: "Sitzungsarchiv", title: "Sitzung nicht gefunden", text: "Wähle zunächst eine Sitzung aus der Übersicht." }
+                                button { class: "primary-button", onclick: move |_| page.set("Sitzungen".to_string()), "Zur Übersicht" }
+                            }
+                        },
+                        "Anträge" => rsx! {
+                            PageHeader { eyebrow: "Transparenz", title: "Anträge", text: "Anträge und Beschlüsse werden über das Sitzungsarchiv veröffentlicht." }
+                            section { class: "callout",
+                                span { class: "card-icon", "≡" }
+                                div {
+                                    h2 { "Anträge einsehen" }
+                                    p { "Öffne eine Sitzung, um Tagesordnungspunkte und zugehörige Anträge einzusehen." }
+                                    button { class: "primary-button", onclick: move |_| page.set("Sitzungen".to_string()), "Zu den Sitzungen" }
+                                }
+                            }
+                        },
+                        "Sitzung erstellen" => rsx! {
+                            PageHeader { eyebrow: "Gremienarbeit", title: "Sitzung erstellen", text: "Lege eine neue Sitzung für eine bestehende Legislaturperiode an." }
+                            section { class: "form-panel",
+                                div { class: "form-row",
+                                    FormField { label: "Datum", placeholder: "", value: session_date, input_type: "date" }
+                                    FormField { label: "Uhrzeit", placeholder: "", value: session_time, input_type: "time" }
+                                }
+                                div { class: "form-row",
+                                    FormField { label: "Antragsfrist – Datum", placeholder: "", value: session_deadline_date, input_type: "date" }
+                                    FormField { label: "Antragsfrist – Uhrzeit", placeholder: "", value: session_deadline_time, input_type: "time" }
+                                }
+                                FormField { label: "Ort", placeholder: "25.22.00.82", value: session_location, input_type: "text" }
+                                label { class: "form-field",
+                                    span { "Sitzungstyp" }
+                                    select {
+                                        value: "{session_type}",
+                                        onchange: move |event| session_type.set(event.value()),
+                                        option { value: "normal", "Normal" }
+                                        option { value: "vv", "Vollversammlung" }
+                                        option { value: "wahlvv", "Wahlvollversammlung" }
+                                        option { value: "ersatz", "Ersatzsitzung" }
+                                        option { value: "konsti", "Konstituierend" }
+                                        option { value: "dringlichkeit", "Dringlichkeit" }
+                                    }
+                                }
+                                label { class: "form-field",
+                                    span { "Legislaturperiode" }
+                                    select {
+                                        value: "{session_period}",
+                                        onchange: move |event| session_period.set(event.value()),
+                                        if periods.is_empty() {
+                                            option { value: "", "Legislaturperioden werden geladen ..." }
+                                        } else {
+                                            for period in periods.iter().rev() {
+                                                option { value: "{period.id}", "{period.name}" }
+                                            }
+                                        }
+                                    }
+                                }
+                                p { class: "form-hint", "Die aktuelle Legislaturperiode wird automatisch vorausgewählt. Die API erhält weiterhin ihre UUID." }
+                                button {
+                                    class: "primary-button",
+                                    r#type: "button",
+                                    onclick: move |_| {
+                                        let payload = CreateSitzung {
+                                            datetime: format!("{}T{}:00Z", session_date(), session_time()),
+                                            ort: session_location().trim().to_string(),
+                                            typ: session_type(),
+                                            antragsfrist: format!("{}T{}:00Z", session_deadline_date(), session_deadline_time()),
+                                            legislative_period: session_period().trim().to_string(),
+                                        };
+                                        spawn(async move {
+                                            let result = api_post::<Sitzung, _>("/sitzungen", payload).await;
+                                            session_feedback.set(Some(match result {
+                                                Ok(_) => "Sitzung erfolgreich erstellt.".to_string(),
+                                                Err(error) => format!("Sitzung konnte nicht erstellt werden: {error}"),
+                                            }));
+                                        });
+                                    },
+                                    "Sitzung speichern"
+                                }
+                                if let Some(feedback) = session_feedback() {
+                                    p { class: "form-feedback", "{feedback}" }
+                                }
+                            }
+                            section { class: "form-panel secondary-form",
+                                h2 { "Neue Legislaturperiode" }
+                                p { class: "form-hint", "Füge eine neue Periode hinzu. Sie wird anschließend direkt im Sitzungsformular auswählbar." }
+                                FormField { label: "Name", placeholder: "FSR 26/27", value: legislative_period_name, input_type: "text" }
+                                button {
+                                    class: "primary-button",
+                                    r#type: "button",
+                                    onclick: move |_| {
+                                        let name = legislative_period_name().trim().to_string();
+                                        let path = format!("/legislative-periods?name={}", encode_query(&name));
+                                        spawn(async move {
+                                            let result = api_post_without_body::<LegislaturPeriode>(&path).await;
+                                            legislative_period_feedback.set(Some(match result {
+                                                Ok(_) => {
+                                                    period_refresh += 1;
+                                                    "Legislaturperiode erfolgreich erstellt.".to_string()
+                                                }
+                                                Err(error) => format!("Legislaturperiode konnte nicht erstellt werden: {error}"),
+                                            }));
+                                        });
+                                    },
+                                    "Legislaturperiode hinzufügen"
+                                }
+                                if let Some(feedback) = legislative_period_feedback() {
+                                    p { class: "form-feedback", "{feedback}" }
+                                }
+                            }
+                        },
+                        "Antrag einreichen" => rsx! {
+                            PageHeader { eyebrow: "Transparenz", title: "Antrag einreichen", text: "Reiche einen Antrag zur Beratung durch den Fachschaftsrat ein." }
+                            section { class: "form-panel",
+                                FormField { label: "Titel", placeholder: "Kurzer Titel des Antrags", value: application_title, input_type: "text" }
+                                TextAreaField { label: "Antragstext", placeholder: "Der Fachschaftsrat möge beschließen, dass ...", value: application_text }
+                                TextAreaField { label: "Begründung", placeholder: "Warum soll der Antrag beschlossen werden?", value: application_reason }
+                                p { class: "form-hint", "Nach dem Absenden wird der Antrag über POST /api/antraege an das Backend übertragen." }
+                                button {
+                                    class: "primary-button",
+                                    r#type: "button",
+                                    onclick: move |_| {
+                                        let payload = CreateAntrag {
+                                            titel: application_title().trim().to_string(),
+                                            antragstext: application_text().trim().to_string(),
+                                            begruendung: application_reason().trim().to_string(),
+                                        };
+                                        spawn(async move {
+                                            let result = api_post::<serde_json::Value, _>("/antraege", payload).await;
+                                            application_feedback.set(Some(match result {
+                                                Ok(_) => "Antrag erfolgreich eingereicht.".to_string(),
+                                                Err(error) => format!("Antrag konnte nicht eingereicht werden: {error}"),
+                                            }));
+                                        });
+                                    },
+                                    "Antrag einreichen"
+                                }
+                                if let Some(feedback) = application_feedback() {
+                                    p { class: "form-feedback", "{feedback}" }
+                                }
+                            }
+                        },
+                        _ => rsx! {
+                            section { class: "hero",
+                                div { class: "hero-content",
+                                    span { class: "eyebrow", "Willkommen" }
+                                    h1 { "Fachschaft Informatik" }
+                                    p { "Deine Anlaufstelle für Studium, Hochschulpolitik und Fachschaftsleben an der HHU." }
+                                    div { class: "hero-actions",
+                                        button { class: "primary-button light", onclick: move |_| page.set("Sitzungen".to_string()), "Sitzungen ansehen →" }
+                                        a { class: "secondary-button", href: "{SITE_URL}/de/kontakt/", "Kontakt aufnehmen" }
+                                    }
+                                }
+                                div { class: "hero-orbit",
+                                    span { "FS" }
+                                    i {}
+                                    i {}
+                                    i {}
+                                }
+                            }
+
+                            div { class: "stats-grid",
+                                StatCard { value: "{session_list.len()}", label: "Sitzungen" }
+                                StatCard { value: "{people.len()}", label: "Mitglieder" }
+                                StatCard { value: "{calendar_list.len()}", label: "Kalender" }
+                            }
+
+                            div { class: "dashboard-grid",
+                                section { class: "panel",
+                                    div { class: "panel-title-row",
+                                        div {
+                                            span { class: "eyebrow dark", "Gremienarbeit" }
+                                            h2 { "Letzte Sitzung" }
+                                        }
+                                        button { class: "text-button", onclick: move |_| page.set("Sitzungen".to_string()), "Alle anzeigen →" }
+                                    }
+                                    if let Some(session) = latest_session {
+                                        SessionFeature { session }
+                                    } else {
+                                        EmptyState { text: "Keine Sitzungsdaten verfügbar." }
+                                    }
+                                }
+                                section { class: "panel accent-panel",
+                                    span { class: "eyebrow dark", "Fachschaftsrat" }
+                                    h2 { "Unsere Rollen" }
+                                    p { "Engagierte Studierende gestalten Studium und Campus mit." }
+                                    div { class: "tag-list",
+                                        for role in role_list.iter() {
+                                            span { class: "tag", "{role.name}" }
+                                        }
+                                    }
+                                    a { class: "text-button", href: "{SITE_URL}/de/aboutus/", "Mehr über uns →" }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn PageHeader(eyebrow: &'static str, title: &'static str, text: &'static str) -> Element {
+    rsx! {
+        div { class: "page-header",
+            span { class: "eyebrow dark", "{eyebrow}" }
+            h1 { "{title}" }
+            p { "{text}" }
+        }
+    }
+}
+
+#[component]
+fn StatCard(value: String, label: &'static str) -> Element {
+    rsx! {
+        div { class: "stat-card",
+            strong { "{value}" }
+            span { "{label}" }
+        }
+    }
+}
+
+#[component]
+fn FormField(
+    label: &'static str,
+    placeholder: &'static str,
+    value: Signal<String>,
+    input_type: &'static str,
+) -> Element {
+    rsx! {
+        label { class: "form-field",
+            span { "{label}" }
+            input {
+                r#type: input_type,
+                placeholder,
+                value: "{value}",
+                oninput: move |event| value.set(event.value()),
+            }
+        }
+    }
+}
+
+#[component]
+fn TextAreaField(label: &'static str, placeholder: &'static str, value: Signal<String>) -> Element {
+    rsx! {
+        label { class: "form-field",
+            span { "{label}" }
+            textarea {
+                placeholder,
+                value: "{value}",
+                oninput: move |event| value.set(event.value()),
+            }
+        }
+    }
+}
+
+#[component]
+fn SessionFeature(session: Sitzung) -> Element {
+    let location = if session.ort.is_empty() {
+        "wird bekannt gegeben".to_string()
+    } else {
+        session.ort.clone()
+    };
+
+    rsx! {
+        div { class: "session-feature",
+            div { class: "session-date",
+                strong { "{format_date(&session.datetime)}" }
+                span { "{session.typ}" }
+            }
+            div { class: "session-details",
+                h3 { "{session.legislatur_periode.name}" }
+                p { "Beginn: {format_datetime(&session.datetime)}" }
+                p { "Ort: {location}" }
+            }
+            span { class: "arrow", "→" }
+        }
+    }
+}
+
+#[component]
+fn SessionRow(session: Sitzung, on_open: EventHandler<String>) -> Element {
+    let location = if session.ort.is_empty() {
+        "Ort offen".to_string()
+    } else {
+        session.ort.clone()
+    };
+
+    let protocol = protocol_url(&session);
+
+    rsx! {
+        div { class: "session-row",
+            button {
+                class: "session-row-main",
+                r#type: "button",
+                onclick: move |_| on_open.call(session.id.clone()),
+                div { class: "session-date",
+                    strong { "{format_date(&session.datetime)}" }
+                    span { "{session.typ}" }
+                }
+                div { class: "session-details",
+                    h3 { "{session.legislatur_periode.name}" }
+                    p { "{format_datetime(&session.datetime)} · {location}" }
+                    small { "Antragsfrist: {format_datetime(&session.antragsfrist)}" }
+                }
+                span { class: "arrow", "→" }
+            }
+            if let Some(url) = protocol {
+                a { class: "protocol-link compact-link", href: "{url}", target: "_blank", rel: "noreferrer", "Protokoll ↗" }
+            }
+        }
+    }
+}
+
+#[component]
+fn EmptyState(text: &'static str) -> Element {
+    rsx! {
+        div { class: "empty-state",
+            span { "◌" }
+            p { "{text}" }
+        }
+    }
+}
+
+fn main() {
+    dioxus::launch(App);
+}
