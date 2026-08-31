@@ -30,14 +30,6 @@ struct LegislaturPeriode {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
-struct PublicPerson {
-    id: String,
-    name: String,
-    user_name: Option<String>,
-    matrix_id: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq)]
 struct Role {
     id: String,
     name: String,
@@ -251,16 +243,16 @@ fn session_sort_key(session: &Sitzung) -> DateTime<Utc> {
 fn route_from_path(path: &str) -> (String, Option<String>) {
     let path = path.trim_end_matches('/');
     match path {
-        "" | "/" => ("Startseite".to_string(), None),
+        "" | "/" => ("Sitzungen".to_string(), None),
         "/sitzungen" => ("Sitzungen".to_string(), None),
-        "/antraege" => ("Anträge".to_string(), None),
         "/antrag-einreichen" => ("Antrag einreichen".to_string(), None),
         "/sitzung-erstellen" => ("Sitzung erstellen".to_string(), None),
+        "/verwaiste-antraege" => ("Verwaiste Anträge".to_string(), None),
         path if path.starts_with("/sitzungen/") => (
             "Sitzungsdetails".to_string(),
             path.strip_prefix("/sitzungen/").map(str::to_string),
         ),
-        _ => ("Startseite".to_string(), None),
+        _ => ("Sitzungen".to_string(), None),
     }
 }
 
@@ -270,10 +262,10 @@ fn path_for_route(page: &str, session_id: Option<&str>) -> String {
         "Sitzungsdetails" => session_id
             .map(|id| format!("/sitzungen/{id}"))
             .unwrap_or_else(|| "/sitzungen".to_string()),
-        "Anträge" => "/antraege".to_string(),
         "Antrag einreichen" => "/antrag-einreichen".to_string(),
         "Sitzung erstellen" => "/sitzung-erstellen".to_string(),
-        _ => "/".to_string(),
+        "Verwaiste Anträge" => "/verwaiste-antraege".to_string(),
+        _ => "/sitzungen".to_string(),
     }
 }
 
@@ -281,9 +273,16 @@ fn path_for_route(page: &str, session_id: Option<&str>) -> String {
 fn App() -> Element {
     let (initial_page, initial_session_id) = window()
         .map(|window| route_from_path(&window.location().pathname().unwrap_or_default()))
-        .unwrap_or_else(|| ("Startseite".to_string(), None));
+        .unwrap_or_else(|| ("Sitzungen".to_string(), None));
     let mut page = use_signal(|| initial_page);
     let selected_session_id = use_signal(|| initial_session_id);
+    let mut dark_mode = use_signal(|| {
+        window()
+            .and_then(|window| window.local_storage().ok().flatten())
+            .and_then(|storage| storage.get_item("fscs-dark-mode").ok().flatten())
+            .as_deref()
+            == Some("true")
+    });
     let mut skip_history_update = use_signal(|| true);
     {
         let mut page = page;
@@ -345,9 +344,6 @@ fn App() -> Element {
     let expanded_top_id = use_signal(|| None::<String>);
     let mut period_refresh = use_signal(|| 0u32);
     let sessions = use_resource(|| async { api_get::<Vec<Sitzung>>("/sitzungen").await });
-    let persons = use_resource(|| async { api_get::<Vec<PublicPerson>>("/persons").await });
-    let roles = use_resource(|| async { api_get::<Vec<Role>>("/roles").await });
-    let calendars = use_resource(|| async { api_get::<Vec<String>>("/calendar").await });
     let legislative_periods = use_resource(move || {
         let _ = period_refresh();
         async { api_get::<Vec<LegislaturPeriode>>("/legislative-periods").await }
@@ -392,7 +388,6 @@ fn App() -> Element {
         .unwrap_or_default();
     session_list.sort_by_key(session_sort_key);
     session_list.reverse();
-    let latest_session = session_list.first().cloned();
     let selected_session = selected_session_id().and_then(|id| {
         session_list
             .iter()
@@ -412,41 +407,21 @@ fn App() -> Element {
         .cloned()
         .unwrap_or_default();
 
-    let people = persons
-        .read()
-        .as_ref()
-        .and_then(|result| result.as_ref().ok())
-        .cloned()
-        .unwrap_or_default();
-    let role_list = roles
-        .read()
-        .as_ref()
-        .and_then(|result| result.as_ref().ok())
-        .cloned()
-        .unwrap_or_default();
-    let calendar_list = calendars
-        .read()
-        .as_ref()
-        .and_then(|result| result.as_ref().ok())
-        .cloned()
-        .unwrap_or_default();
-
     let navigation = [
-        ("Startseite", "⌂"),
         ("Sitzungen", "▣"),
-        ("Anträge", "≡"),
         ("Antrag einreichen", "＋"),
+        ("Verwaiste Anträge", "🗑"),
     ];
 
     rsx! {
         style { {include_str!("style.css")} }
-        div { class: "app",
+        div { class: if dark_mode() { "app dark-mode" } else { "app" },
             header { class: "topbar",
                 div { class: "topbar-inner",
                     button {
                         class: "mobile-menu",
                         aria_label: "Navigation öffnen",
-                        onclick: move |_| page.set("Startseite".to_string()),
+                        onclick: move |_| page.set("Sitzungen".to_string()),
                         "☰"
                     }
                     a { class: "brand", href: "#",
@@ -457,11 +432,20 @@ fn App() -> Element {
                         }
                     }
                     div { class: "topbar-actions",
-                        label { class: "search",
-                            span { "⌕" }
-                            input { placeholder: "Suchen..." }
+                        button {
+                            class: "round-button",
+                            aria_label: "Darkmode umschalten",
+                            aria_pressed: "{dark_mode()}",
+                            title: if dark_mode() { "Helles Design aktivieren" } else { "Dunkles Design aktivieren" },
+                            onclick: move |_| {
+                                let enabled = !dark_mode();
+                                dark_mode.set(enabled);
+                                if let Some(storage) = window().and_then(|window| window.local_storage().ok().flatten()) {
+                                    let _ = storage.set_item("fscs-dark-mode", if enabled { "true" } else { "false" });
+                                }
+                            },
+                            if dark_mode() { "☀" } else { "☾" }
                         }
-                        button { class: "round-button", aria_label: "Darkmode umschalten", "☾" }
                         button { class: "round-button", aria_label: "Sprache auswählen", "🇩🇪" }
                         a { class: "login-button", href: "{SITE_URL}/auth/login", "Anmelden" }
                     }
@@ -520,9 +504,6 @@ fn App() -> Element {
                                 on_refresh_orphans: move |_| orphan_antraege.restart(),
                             }
                         },
-                        "Anträge" => rsx! {
-                            AntraegePage { page }
-                        },
                         "Sitzung erstellen" => rsx! {
                             SitzungErstellenPage {
                                 periods: periods.clone(),
@@ -547,14 +528,17 @@ fn App() -> Element {
                                 application_feedback,
                             }
                         },
+                        "Verwaiste Anträge" => rsx! {
+                            VerwaisteAntraegePage {
+                                orphan_list: orphan_list.clone(),
+                                on_refresh: move |_| orphan_antraege.restart(),
+                            }
+                        },
                         _ => rsx! {
-                            HomePage {
+                            SitzungenPage {
+                                sessions: session_list.clone(),
                                 page,
-                                session_list_len: session_list.len(),
-                                people_len: people.len(),
-                                calendar_list_len: calendar_list.len(),
-                                latest_session,
-                                role_list: role_list.clone(),
+                                selected_session_id,
                             }
                         },
                     }
@@ -571,7 +555,7 @@ fn SitzungenPage(
     mut selected_session_id: Signal<Option<String>>,
 ) -> Element {
     rsx! {
-        PageHeader { eyebrow: "Gremienarbeit", title: "Sitzungen", text: "Alle veröffentlichten Sitzungen des Fachschaftsrats." }
+        PageHeader { title: "Sitzungen", text: "Alle veröffentlichten Sitzungen des Fachschaftsrats." }
         section { class: "panel",
             div { class: "panel-title-row",
                 h2 { "Sitzungsübersicht" }
@@ -622,7 +606,7 @@ fn SitzungsdetailsPage(
 ) -> Element {
     rsx! {
         if let Some(session) = selected_session {
-            PageHeader { eyebrow: "Sitzungsarchiv", title: "Sitzungsdetails", text: "Datum, Ort, Antragsfrist und Tagesordnung dieser Sitzung." }
+            PageHeader { title: "Sitzungsdetails", text: "Datum, Ort, Antragsfrist und Tagesordnung dieser Sitzung." }
             section { class: "panel detail-panel",
                 button {
                     class: "text-button back-button",
@@ -900,8 +884,70 @@ fn SitzungsdetailsPage(
                 }
             }
         } else {
-            PageHeader { eyebrow: "Sitzungsarchiv", title: "Sitzung nicht gefunden", text: "Wähle zunächst eine Sitzung aus der Übersicht." }
+            PageHeader { title: "Sitzung nicht gefunden", text: "Wähle zunächst eine Sitzung aus der Übersicht." }
             button { class: "primary-button", onclick: move |_| page.set("Sitzungen".to_string()), "Zur Übersicht" }
+        }
+    }
+}
+
+#[component]
+fn VerwaisteAntraegePage(orphan_list: Vec<Antrag>, on_refresh: EventHandler<()>) -> Element {
+    let mut delete_feedback = use_signal(|| None::<String>);
+
+    rsx! {
+        PageHeader {
+            title: "Verwaiste Anträge",
+            text: "Anträge, die noch keinem Tagesordnungspunkt zugeordnet sind, können hier gelöscht werden."
+        }
+        section { class: "panel",
+            div { class: "panel-title-row",
+                h2 { "Anträge ohne Zuordnung" }
+                span { class: "count-badge", "{orphan_list.len()} Einträge" }
+            }
+            if orphan_list.is_empty() {
+                EmptyState { text: "Keine verwaisten Anträge gefunden." }
+            } else {
+                div { class: "session-list",
+                    for antrag in orphan_list.iter().cloned() {
+                        article { class: "agenda-item",
+                            div { class: "agenda-number", "!" }
+                            div {
+                                div { class: "agenda-item-header",
+                                    div {
+                                        h3 { "{antrag.titel}" }
+                                    }
+                                    button {
+                                        class: "danger-button top-delete",
+                                        r#type: "button",
+                                        onclick: move |_| {
+                                            let antrag_id = antrag.id.clone();
+                                            spawn(async move {
+                                                let result = api_delete(&format!("/antraege/{antrag_id}")).await;
+                                                delete_feedback.set(Some(match result {
+                                                    Ok(()) => {
+                                                        on_refresh.call(());
+                                                        "Antrag erfolgreich gelöscht.".to_string()
+                                                    }
+                                                    Err(error) => format!("Antrag konnte nicht gelöscht werden: {error}"),
+                                                }));
+                                            });
+                                        },
+                                        "Löschen"
+                                    }
+                                }
+                                p { "{antrag.antragstext}" }
+                                if !antrag.begruendung.trim().is_empty() {
+                                    p { "Begründung: {antrag.begruendung}" }
+                                }
+                                small { "Eingereicht am {format_date(&antrag.erstellt_am)}" }
+                            }
+                        }
+                    }
+                }
+            }
+            if let Some(feedback) = delete_feedback() {
+                p { class: "form-feedback", "{feedback}" }
+            }
         }
     }
 }
@@ -909,7 +955,7 @@ fn SitzungsdetailsPage(
 #[component]
 fn AntraegePage(mut page: Signal<String>) -> Element {
     rsx! {
-        PageHeader { eyebrow: "Transparenz", title: "Anträge", text: "Anträge und Beschlüsse werden über das Sitzungsarchiv veröffentlicht." }
+        PageHeader { title: "Anträge", text: "Anträge und Beschlüsse werden über das Sitzungsarchiv veröffentlicht." }
         section { class: "callout",
             span { class: "card-icon", "≡" }
             div {
@@ -937,7 +983,7 @@ fn SitzungErstellenPage(
     mut period_refresh: Signal<u32>,
 ) -> Element {
     rsx! {
-        PageHeader { eyebrow: "Gremienarbeit", title: "Sitzung erstellen", text: "Lege eine neue Sitzung für eine bestehende Legislaturperiode an." }
+        PageHeader { title: "Sitzung erstellen", text: "Lege eine neue Sitzung für eine bestehende Legislaturperiode an." }
         section { class: "form-panel",
             div { class: "form-row",
                 FormField { label: "Datum", placeholder: "", value: session_date, input_type: "date" }
@@ -1039,7 +1085,7 @@ fn AntragEinreichenPage(
     mut application_feedback: Signal<Option<String>>,
 ) -> Element {
     rsx! {
-        PageHeader { eyebrow: "Transparenz", title: "Antrag einreichen", text: "Reiche einen Antrag zur Beratung durch den Fachschaftsrat ein." }
+        PageHeader { title: "Antrag einreichen", text: "Reiche einen Antrag zur Beratung durch den Fachschaftsrat ein." }
         section { class: "form-panel",
             FormField { label: "Titel", placeholder: "Kurzer Titel des Antrags", value: application_title, input_type: "text" }
             TextAreaField { label: "Antragstext", placeholder: "Der Fachschaftsrat möge beschließen, dass ...", value: application_text }
@@ -1083,7 +1129,6 @@ fn HomePage(
     rsx! {
         section { class: "hero",
             div { class: "hero-content",
-                span { class: "eyebrow", "Willkommen" }
                 h1 { "Fachschaft Informatik" }
                 p { "Deine Anlaufstelle für Studium, Hochschulpolitik und Fachschaftsleben an der HHU." }
                 div { class: "hero-actions",
@@ -1109,7 +1154,6 @@ fn HomePage(
             section { class: "panel",
                 div { class: "panel-title-row",
                     div {
-                        span { class: "eyebrow dark", "Gremienarbeit" }
                         h2 { "Letzte Sitzung" }
                     }
                     button { class: "text-button", onclick: move |_| page.set("Sitzungen".to_string()), "Alle anzeigen →" }
@@ -1121,7 +1165,6 @@ fn HomePage(
                 }
             }
             section { class: "panel accent-panel",
-                span { class: "eyebrow dark", "Fachschaftsrat" }
                 h2 { "Unsere Rollen" }
                 p { "Engagierte Studierende gestalten Studium und Campus mit." }
                 div { class: "tag-list",
@@ -1136,10 +1179,9 @@ fn HomePage(
 }
 
 #[component]
-fn PageHeader(eyebrow: &'static str, title: &'static str, text: &'static str) -> Element {
+fn PageHeader(title: &'static str, text: &'static str) -> Element {
     rsx! {
         div { class: "page-header",
-            span { class: "eyebrow dark", "{eyebrow}" }
             h1 { "{title}" }
             p { "{text}" }
         }
