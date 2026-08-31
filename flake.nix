@@ -62,7 +62,7 @@
         };
 
         packages.default = pkgs.rustPlatform.buildRustPackage {
-          pname = "sitzungstool2";
+          pname = "sitzungstool";
           version = "0.1.0";
           src = ./.;
           cargoLock.lockFile = ./Cargo.lock;
