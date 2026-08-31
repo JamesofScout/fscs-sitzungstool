@@ -362,8 +362,10 @@ fn App() -> Element {
             }
         }
     });
-    let mut orphan_antraege =
-        use_resource(|| async { api_get::<Vec<Antrag>>("/antraege/orphans").await });
+    let mut orphan_antraege = use_resource(move || {
+        let _ = page();
+        async { api_get::<Vec<Antrag>>("/antraege/orphans").await }
+    });
 
     let periods = legislative_periods
         .read()
@@ -604,6 +606,11 @@ fn SitzungsdetailsPage(
     on_refresh_tops: EventHandler<()>,
     on_refresh_orphans: EventHandler<()>,
 ) -> Element {
+    let selected_orphan = orphan_list
+        .iter()
+        .find(|antrag| Some(antrag.id.as_str()) == selected_antrag_id().as_deref())
+        .cloned();
+
     rsx! {
         if let Some(session) = selected_session {
             PageHeader { title: "Sitzungsdetails", text: "Datum, Ort, Antragsfrist und Tagesordnung dieser Sitzung." }
@@ -732,6 +739,18 @@ fn SitzungsdetailsPage(
                                             }
                                             if orphan_list.is_empty() {
                                                 p { class: "form-hint", "Es sind derzeit keine nicht zugeordneten Anträge vorhanden." }
+                                            }
+                                            if let Some(antrag) = &selected_orphan {
+                                                div { class: "application-card",
+                                                    div { class: "application-card-header",
+                                                        strong { "{antrag.titel}" }
+                                                    }
+                                                    p { "{antrag.antragstext}" }
+                                                    if !antrag.begruendung.trim().is_empty() {
+                                                        p { "Begründung: {antrag.begruendung}" }
+                                                    }
+                                                    small { "Eingereicht am {format_date(&antrag.erstellt_am)}" }
+                                                }
                                             }
                                             div { class: "association-actions",
                                                 button {
