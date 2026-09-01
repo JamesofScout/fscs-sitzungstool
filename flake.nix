@@ -64,7 +64,9 @@
         packages.docker = pkgs.dockerTools.buildImage {
           name = "fscs-sitzungstool";
           tag = "latest";
-          contents = [ frontendStart ];
+          copyToRoot = [
+            ./Trunk.toml
+          ];
           config = {
             Cmd = [ "${frontendStart}/bin/frontend-start" ];
             ExposedPorts = { "8080/tcp" = {}; };
