@@ -26,9 +26,6 @@
             pkgs.binaryen
             pkgs.gcc
           ]}:$PATH"
-          if ! rustup target list --installed | grep -q wasm32-unknown-unknown; then
-            rustup target add wasm32-unknown-unknown
-          fi
           site_url="''${1:-http://localhost:8080}"
           export FSCS_SITE_URL="$site_url"
           echo "Starting frontend for $FSCS_SITE_URL..."
@@ -54,7 +51,7 @@
               rustup target add wasm32-unknown-unknown
             fi
             echo "FSCS frontend shell ready."
-            echo "Set Backend via: `export FSCS_SITE_URL=<url>"
+            echo "Set Backend via: \`export FSCS_SITE_URL=<url>\`"
             echo "Run: trunk serve --open"
           '';
         };
@@ -62,6 +59,16 @@
         apps.frontend = {
           type = "app";
           program = "${frontendStart}/bin/frontend-start";
+        };
+
+        packages.docker = pkgs.dockerTools.buildImage {
+          name = "my-app";
+          tag = "latest";
+          contents = [ frontendStart ];
+          config = {
+            Cmd = [ "${frontendStart}/bin/frontend-start" ];
+            ExposedPorts = { "8080/tcp" = {}; };
+          };
         };
 
         packages.default = pkgs.rustPlatform.buildRustPackage {
