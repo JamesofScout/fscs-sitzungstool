@@ -62,7 +62,7 @@
         };
 
         packages.docker = pkgs.dockerTools.buildImage {
-          name = "my-app";
+          name = "fscs-sitzungstool";
           tag = "latest";
           contents = [ frontendStart ];
           config = {
