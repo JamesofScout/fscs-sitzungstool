@@ -48,27 +48,9 @@ Alternativ die Web-App via Cargo bauen, sofern im Projekt ein passender Run-Targ
 
 ## Deployment mit Nix
 
-Wenn das Projekt in einer Nix-Umgebung deployed werden soll, ist in der Regel eine minimale `shell.nix` oder ein Nix-Flake für Rust + Trunk ausreichend.
-
-Beispiel für eine einfache Shell-Umgebung:
-
-```nix
-{ pkgs ? import <nixpkgs> {} }:
-
-pkgs.mkShell {
-  buildInputs = with pkgs; [
-    rustc
-    cargo
-    rustfmt
-    trunk
-  ];
-}
-```
-
-Dann:
 
 ```bash
-nix-shell
+nix develop
 cargo build
 trunk build --release
 ```
