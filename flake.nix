@@ -24,6 +24,7 @@
             pkgs.trunk
             pkgs.wasm-bindgen-cli
             pkgs.binaryen
+            pkgs.gcc
           ]}:$PATH"
           if ! rustup target list --installed | grep -q wasm32-unknown-unknown; then
             rustup target add wasm32-unknown-unknown
@@ -36,9 +37,10 @@
       in
       {
         devShells.default = pkgs.mkShell {
-          buildInputs = with pkgs; [
+          nativeBuildInputs = with pkgs; [
             rustToolchain
             trunk
+            rustup
             wasm-bindgen-cli
             binaryen
             pkg-config
@@ -52,6 +54,7 @@
               rustup target add wasm32-unknown-unknown
             fi
             echo "FSCS frontend shell ready."
+            echo "Set Backend via: `export FSCS_SITE_URL=<url>"
             echo "Run: trunk serve --open"
           '';
         };
@@ -66,7 +69,7 @@
           version = "0.1.0";
           src = ./.;
           cargoLock.lockFile = ./Cargo.lock;
-          nativeBuildInputs = with pkgs; [ pkg-config ];
+          nativeBuildInputs = with pkgs; [ pkg-config gcc ];
           buildInputs = with pkgs; [ openssl ];
         };
       }
