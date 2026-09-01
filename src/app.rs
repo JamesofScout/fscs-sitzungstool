@@ -158,7 +158,7 @@ pub fn App() -> Element {
     let navigation = [
         ("Sitzungen", "▣"),
         ("Antrag einreichen", "＋"),
-        ("Verwaiste Anträge", "🗑"),
+        ("Anträge löschen", "🗑"),
     ];
 
     rsx! {
