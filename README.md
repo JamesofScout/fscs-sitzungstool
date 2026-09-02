@@ -50,15 +50,10 @@ Alternativ die Web-App via Cargo bauen, sofern im Projekt ein passender Run-Targ
 
 
 ```bash
-nix develop
-cargo build
-trunk build --release
+nix dbuild
 ```
 
-Die erzeugte Ausgabe liegt danach im Ordner `dist/` und kann als statische Web-App ausgeliefert werden.
-
-Wichtig: `FSCS_SITE_URL` muss in der Laufzeitumgebung korrekt gesetzt sein, damit die Frontend-API-Requests auf das Backend zeigen.
-
+Die erzeugte Ausgabe liegt danach im Ordner `result/` und kann als statische Web-App ausgeliefert werden.
 ## Deployment ohne Nix
 
 Ohne Nix kann das Frontend mit den Standard-Rust- und Trunk-Tools gebaut und deployed werden.
@@ -145,7 +140,7 @@ src/
 Der Login-Link setzt den aktuellen Frontend-Standort als `path`-Parameter, damit nach dem Login wieder auf die aktuell aufgerufene Seite zurückgekehrt werden kann.
 
 ### Verwaiste Anträge
-Unter der Seite `Verwaiste Anträge` lassen sich nicht zugeordnete Anträge anzeigen und löschen.
+Unter der Seite `Anträge löschen` lassen sich nicht zugeordnete Anträge anzeigen und löschen.
 
 ### Sitzungsverwaltung
 Sitzungen können erstellt, angezeigt und mit Tagesordnungspunkten und Anträgen verknüpft werden.
