@@ -91,7 +91,7 @@ Beispiel für nginx:
 server {
     listen 80;
     server_name example.com;
-    root /var/www/sitzungstool2/dist;
+    root /var/www/sitzungstool/dist;
     index index.html;
 
     location / {
@@ -100,9 +100,9 @@ server {
 }
 ```
 
-### 4. Laufzeitkonfiguration
+### 4. Compiletime Configuration.
 
-Vor dem Start auf dem Server sollte `FSCS_SITE_URL` gesetzt werden, falls das Frontend nicht lokal auf `localhost:8080` laufen soll.
+Vor der Compilierung sollte `FSCS_SITE_URL` gesetzt werden, falls das Frontend nicht auf `https://fscs.hhu.de` läuft.
 
 Beispiel:
 
@@ -113,6 +113,7 @@ export FSCS_SITE_URL=https://api.example.com
 ## Umgebungsvariablen
 
 Das Frontend verwendet optional die Umgebungsvariable `FSCS_SITE_URL`:
+Diese muss bei der Kompliation gesetzt sein.
 
 ```bash
 export FSCS_SITE_URL=http://localhost:8080
@@ -121,7 +122,7 @@ export FSCS_SITE_URL=http://localhost:8080
 Wenn sie nicht gesetzt ist, wird als Standardwert verwendet:
 
 ```text
-http://localhost:8080
+https://fscs.hhu,de
 ```
 
 Diese Variable wird für die API-Anfragen verwendet.

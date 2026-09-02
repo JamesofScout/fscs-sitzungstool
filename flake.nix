@@ -1,86 +1,165 @@
 {
-  description = "FSCS Dioxus frontend development environment";
+  description = "Build a cargo project";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+
+    crane.url = "github:ipetkov/crane";
+
     flake-utils.url = "github:numtide/flake-utils";
-    rust-overlay.url = "github:oxalica/rust-overlay";
+
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, flake-utils, rust-overlay }:
-    flake-utils.lib.eachDefaultSystem (system:
-      let
-        overlays = [ rust-overlay.overlays.default ];
-        pkgs = import nixpkgs { inherit system overlays; };
-
-        rustToolchain = pkgs.rust-bin.stable.latest.default.override {
-          extensions = [ "rustfmt" "clippy" "rust-src" ];
-          targets = [ "wasm32-unknown-unknown" ];
-        };
-
-        frontendStart = pkgs.writeShellScriptBin "frontend-start" ''
-          export PATH="${pkgs.lib.makeBinPath [
-            rustToolchain
-            pkgs.trunk
-            pkgs.wasm-bindgen-cli
-            pkgs.binaryen
-            pkgs.gcc
-          ]}:$PATH"
-          site_url="''${1:-http://localhost:8080}"
-          export FSCS_SITE_URL="$site_url"
-          echo "Starting frontend for $FSCS_SITE_URL..."
-          exec trunk serve --port 8040 --address 0.0.0.0
-        '';
-      in
-      {
-        devShells.default = pkgs.mkShell {
-          nativeBuildInputs = with pkgs; [
-            rustToolchain
-            trunk
-            rustup
-            wasm-bindgen-cli
-            binaryen
-            pkg-config
-            openssl
-            curl
-          ];
-
-          shellHook = ''
-            export PATH="${rustToolchain}/bin:$PATH"
-            if ! rustup target list --installed | grep -q wasm32-unknown-unknown; then
-              rustup target add wasm32-unknown-unknown
-            fi
-            echo "FSCS frontend shell ready."
-            echo "Set Backend via: \`export FSCS_SITE_URL=<url>\`"
-            echo "Run: trunk serve --open"
-          '';
-        };
-
-        apps.frontend = {
-          type = "app";
-          program = "${frontendStart}/bin/frontend-start";
-        };
-
-        packages.docker = pkgs.dockerTools.buildImage {
-          name = "fscs-sitzungstool";
-          tag = "latest";
-          copyToRoot = [
-            ./Trunk.toml
-          ];
-          config = {
-            Cmd = [ "${frontendStart}/bin/frontend-start" ];
-            ExposedPorts = { "8080/tcp" = {}; };
+  outputs =
+    { self
+    , nixpkgs
+    , crane
+    , flake-utils
+    , rust-overlay
+    , ...
+    }:
+    flake-utils.lib.eachDefaultSystem
+      (
+        system:
+        let
+          pkgs = import nixpkgs {
+            inherit system;
+            overlays = [ (import rust-overlay) ];
           };
-        };
 
-        packages.default = pkgs.rustPlatform.buildRustPackage {
-          pname = "sitzungstool";
-          version = "0.1.0";
-          src = ./.;
-          cargoLock.lockFile = ./Cargo.lock;
-          nativeBuildInputs = with pkgs; [ pkg-config gcc ];
-          buildInputs = with pkgs; [ openssl ];
-        };
-      }
-    );
+          inherit (pkgs) lib;
+
+          rustToolchainFor =
+            p:
+            p.rust-bin.stable.latest.default.override {
+              # Set the build targets supported by the toolchain,
+              # wasm32-unknown-unknown is required for trunk
+              targets = [ "wasm32-unknown-unknown" ];
+            };
+          craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchainFor;
+
+          # When filtering sources, we want to allow assets other than .rs files
+          unfilteredRoot = ./.; # The original, unfiltered source
+          src = lib.fileset.toSource {
+            root = unfilteredRoot;
+            fileset = lib.fileset.unions [
+              # Default files from crane (Rust and cargo files)
+              (craneLib.fileset.commonCargoSources unfilteredRoot)
+              (lib.fileset.fileFilter
+                (
+                  file:
+                  lib.any file.hasExt [
+                    "html"
+                    "scss"
+                    "css"
+                  ]
+                )
+                unfilteredRoot)
+              # Example of a folder for images, icons, etc
+              (lib.fileset.maybeMissing ./assets)
+            ];
+          };
+
+          # Common arguments can be set here to avoid repeating them later
+          commonArgs = {
+            inherit src;
+            strictDeps = true;
+            # We must force the target, otherwise cargo will attempt to use your native target
+            CARGO_BUILD_TARGET = "wasm32-unknown-unknown";
+
+            buildInputs = [
+              # Add additional build inputs here
+            ]
+            ++ lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
+              # Additional darwin specific inputs can be set here
+              pkgs.libiconv
+            ];
+          };
+
+          # Build *just* the cargo dependencies, so we can reuse
+          # all of that work (e.g. via cachix) when running in CI
+          cargoArtifacts = craneLib.buildDepsOnly (
+            commonArgs
+            // {
+              # You cannot run cargo test on a wasm build
+              doCheck = false;
+            }
+          );
+
+          # Build the actual crate itself, reusing the dependency
+          # artifacts from above.
+          # This derivation is a directory you can put on a webserver.
+          fscs-sitzungstool = craneLib.buildTrunkPackage (
+            commonArgs
+            // {
+              inherit cargoArtifacts;
+              # The version of wasm-bindgen-cli here must match the one from Cargo.lock.
+              wasm-bindgen-cli = pkgs.wasm-bindgen-cli_0_2_125;
+            }
+          );
+
+          # Quick example on how to serve the app,
+          # This is just an example, not useful for production environments
+          serve-app = pkgs.writeShellScriptBin "serve-app" ''
+             ${pkgs.simple-http-server}/bin/simple-http-server -i --try-file index.html ${fscs-sitzungstool}
+          '';
+        in
+        {
+          checks = {
+            # Build the crate as part of `nix flake check` for convenience
+            inherit fscs-sitzungstool;
+
+            # Run clippy (and deny all warnings) on the crate source,
+            # again, reusing the dependency artifacts from above.
+            #
+            # Note that this is done as a separate derivation so that
+            # we can block the CI if there are issues here, but not
+            # prevent downstream consumers from building our crate by itself.
+            fscs-sitzungstool-clippy = craneLib.cargoClippy (
+              commonArgs
+              // {
+                inherit cargoArtifacts;
+                cargoClippyExtraArgs = "--all-targets -- --deny warnings";
+              }
+            );
+
+            # Check formatting
+            fscs-sitzungstool-fmt = craneLib.cargoFmt {
+              inherit src;
+            };
+          };
+
+          packages.default = fscs-sitzungstool;
+
+          packages.docker = pkgs.dockerTools.buildImage {
+            name = "fscs-sitzungstool";
+            tag = "latest";
+            config = {
+              Cmd = [ "${pkgs.simple-http-server}/bin/simple-http-server" "-i" "--try-file" "index.html" "${fscs-sitzungstool}" ];
+              ExposedPorts = { "8000/tcp" = { }; };
+            };
+          };
+
+          apps.default = flake-utils.lib.mkApp {
+            drv = serve-app;
+          };
+
+          devShells.default = craneLib.devShell {
+            # Inherit inputs from checks.
+            checks = self.checks.${system};
+
+            # Additional dev-shell environment variables can be set directly
+            # MY_CUSTOM_DEVELOPMENT_VAR = "something else";
+
+            # Extra inputs can be added here; cargo and rustc are provided by default.
+            packages = [
+              pkgs.trunk
+            ];
+          };
+        }
+      );
 }

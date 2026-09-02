@@ -1,13 +1,13 @@
 use chrono::{DateTime, Utc};
 use reqwest::Client;
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 use crate::models::Sitzung;
 
 pub const SITE_URL: &str = match option_env!("FSCS_SITE_URL") {
-    Some(a) => a,
-    None => "http://localhost:8080",
+    Some(a) if a.is_empty() => a,
+    _ => "https://fscs.hhu.de",
 };
 
 pub async fn api_get<T: DeserializeOwned>(path: &str) -> Result<T, String> {
@@ -166,4 +166,3 @@ pub fn session_sort_key(session: &Sitzung) -> DateTime<Utc> {
         .map(|date| date.with_timezone(&Utc))
         .unwrap_or(DateTime::<Utc>::MIN_UTC)
 }
-
