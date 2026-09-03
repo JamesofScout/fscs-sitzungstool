@@ -7,7 +7,7 @@ pub fn route_from_path(path: &str) -> (String, Option<String>) {
         "/sitzungen" => ("Sitzungen".to_string(), None),
         "/antrag-einreichen" => ("Antrag einreichen".to_string(), None),
         "/sitzung-erstellen" => ("Sitzung erstellen".to_string(), None),
-        "/verwaiste-antraege" => ("Verwaiste Anträge".to_string(), None),
+        "/antraege-loeschen" => ("Anträge löschen".to_string(), None),
         path if path.starts_with("/sitzungen/") => (
             "Sitzungsdetails".to_string(),
             path.strip_prefix("/sitzungen/").map(str::to_string),
@@ -24,7 +24,7 @@ pub fn path_for_route(page: &str, session_id: Option<&str>) -> String {
             .unwrap_or_else(|| "/sitzungen".to_string()),
         "Antrag einreichen" => "/antrag-einreichen".to_string(),
         "Sitzung erstellen" => "/sitzung-erstellen".to_string(),
-        "Verwaiste Anträge" => "/verwaiste-antraege".to_string(),
+        "Anträge löschen" => "/antraege-loeschen".to_string(),
         _ => "/sitzungen".to_string(),
     }
 }

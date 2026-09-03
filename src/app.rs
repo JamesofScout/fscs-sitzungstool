@@ -280,7 +280,7 @@ pub fn App() -> Element {
                                 application_feedback,
                             }
                         },
-                        "Verwaiste Anträge" => rsx! {
+                        "Anträge löschen" => rsx! {
                             VerwaisteAntraegePage {
                                 orphan_list: orphan_list.clone(),
                                 on_refresh: move |_| orphan_antraege.restart(),
@@ -665,7 +665,7 @@ fn VerwaisteAntraegePage(orphan_list: Vec<Antrag>, on_refresh: EventHandler<()>)
 
     rsx! {
         PageHeader {
-            title: "Verwaiste Anträge",
+            title: "Anträge löschen",
             text: "Anträge, die noch keinem Tagesordnungspunkt zugeordnet sind, können hier gelöscht werden."
         }
         section { class: "panel",
